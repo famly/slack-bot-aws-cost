@@ -3,7 +3,6 @@ import boto3
 import datetime
 import os
 import requests
-import sys
 
 n_days = 7
 yesterday = datetime.datetime.today() - datetime.timedelta(days=1)
