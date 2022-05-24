@@ -83,10 +83,10 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None,
             if "AccountAliases" in aliases and len(aliases["AccountAliases"]) > 0:
                 account_name = aliases["AccountAliases"][0]
 
-    if account_name is None:
+    if account_name is None or account_name == "":
         account_name = boto3.client("sts").get_caller_identity().get("Account")
 
-    if account_name is None:
+    if account_name is None or account_name == "":
         account_name = "[NOT FOUND]"
 
     client = boto3.client('ce')
