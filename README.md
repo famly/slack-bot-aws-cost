@@ -6,36 +6,15 @@ Sends daily breakdowns of AWS costs to a Slack channel.
 
 # Install
 
-1. Install [`serverless`](https://serverless.com/), which I use to configure the AWS Lambda function that runs daily.
-
-    ```
-    npm install -g serverless
-    ```
-
 1. Create an [incoming webhook](https://www.slack.com/apps/new/A0F7XDUAZ) that will post to the channel of your choice on your Slack workspace. Grab the URL for use in the next step.
 
-1. Create the service on your local machine. cd to your directory and run this command. Replace path with the path name for the service and app name for the service.
+2. Install serverless python requirements
 
     ```
-    serverless create \
-      --template-url="https://github.com/iandees/aws-billing-to-slack.git" \
-      --path="app-aws-cost" \
-      --name="app-aws-cost"
+    SLACK_WEBHOOK=https://hooks.slack... npm run deploy
     ```
 
-1. Install pipenv
-
-    ```
-    pip install pipenv
-    ```
-
-1. Install serverless python requirements
-
-    ```
-    serverless plugin install -n serverless-python-requirements
-    ```
-
-1. Deploy the system into your AWS account, replacing the webhook URL below with the one you generated above.
+3. Deploy the system into your AWS account, replacing the webhook URL below with the one you generated above.
 
     ```
     serverless deploy --stage="prod" --param="slack_url=https://hooks.slack.com/services/xxx/yyy/zzzz"
@@ -44,7 +23,7 @@ Sends daily breakdowns of AWS costs to a Slack channel.
     You can also run it once to verify that it works:
 
     ```
-    serverless invoke --function reportCost --stage="prod" --param="slack_url=https://hooks.slack.com/services/xxx/yyy/zzzz"
+    npm run invoke
     ```
 
 ## Support for AWS Credits
