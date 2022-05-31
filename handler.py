@@ -5,12 +5,17 @@ import os
 import requests
 
 n_days = 7
-yesterday = datetime.datetime.today() - datetime.timedelta(days=1)
-week_ago = yesterday - datetime.timedelta(days=n_days)
 
 # It seems that the sparkline symbols don't line up (probably based on font?) so put them last
 # Also, leaving out the full block because Slack doesn't like it: '█'
 sparks = ['▁', '▂', '▃', '▄', '▅', '▆', '▇']
+
+short_names = {
+    "Amazon Relational Database Service": "RDS",
+    "Amazon Elastic Compute Cloud - Compute": "EC2 - Compute",
+    "Savings Plans for AWS Compute usage": "Savings Plans",
+    "Amazon Simple Storage Service": "S3",
+}
 
 def sparkline(datapoints):
     lower = min(datapoints)
@@ -58,14 +63,11 @@ def lambda_handler(event, context):
         publish_teams(teams_hook_url, summary, buffer)
 
 
-def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None, yesterday: str = None, new_method=True):
+def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None):
 
-    if yesterday is None:
-        yesterday = datetime.datetime.today() - datetime.timedelta(days=1)
-    else:
-        yesterday = datetime.datetime.strptime(yesterday, '%Y-%m-%d')
-
-    week_ago = yesterday - datetime.timedelta(days=n_days)
+    today = datetime.datetime.today()
+    yesterday = today - datetime.timedelta(days=1)
+    week_ago = today - datetime.timedelta(days=n_days)
     # Generate list of dates, so that even if our data is sparse,
     # we have the correct length lists of costs (len is n_days)
     list_of_dates = [
@@ -94,7 +96,7 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None,
     query = {
         "TimePeriod": {
             "Start": week_ago.strftime('%Y-%m-%d'),
-            "End": yesterday.strftime('%Y-%m-%d'),
+            "End": today.strftime('%Y-%m-%d'),
         },
         "Granularity": "DAILY",
         "Filter": {
@@ -106,6 +108,7 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None,
                         "Refund",
                         "Upfront",
                         "Support",
+                        "Tax",
                     ]
                 }
             }
@@ -124,35 +127,27 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None,
         result = client.get_cost_and_usage(**query)
 
     cost_per_day_by_service = defaultdict(list)
+    cost_per_day_dict = defaultdict(dict)
 
-    if new_method == False:
-        # Build a map of service -> array of daily costs for the time frame
-        for day in result['ResultsByTime']:
-            for group in day['Groups']:
-                key = group['Keys'][0]
-                cost = float(group['Metrics']['UnblendedCost']['Amount'])
-                cost_per_day_by_service[key].append(cost)
-    else:
-        # New method, which first creates a dict of dicts
-        # then loop over the services and loop over the list_of_dates
-        # and this means even for sparse data we get a full list of costs
-        cost_per_day_dict = defaultdict(dict)
+    for day in result['ResultsByTime']:
+        start_date = day["TimePeriod"]["Start"]
+        for group in day['Groups']:
+            key = group['Keys'][0]
+            if group_by == "LINKED_ACCOUNT":
+                dimension = find_by_key(result["DimensionValueAttributes"], "Value", key)
+                if dimension:
+                    key += " ("+dimension["Attributes"]["description"]+")"
+            cost = float(group['Metrics']['UnblendedCost']['Amount'])
+            cost_per_day_dict[key][start_date] = cost
 
-        for day in result['ResultsByTime']:
-            start_date = day["TimePeriod"]["Start"]
-            for group in day['Groups']:
-                key = group['Keys'][0]
-                if group_by == "LINKED_ACCOUNT":
-                    dimension = find_by_key(result["DimensionValueAttributes"], "Value", key)
-                    if dimension:
-                        key += " ("+dimension["Attributes"]["description"]+")"
-                cost = float(group['Metrics']['UnblendedCost']['Amount'])
-                cost_per_day_dict[key][start_date] = cost
-
-        for key in cost_per_day_dict.keys():
-            for start_date in list_of_dates:
-                cost = cost_per_day_dict[key].get(start_date, 0.0)  # fallback for sparse data
-                cost_per_day_by_service[key].append(cost)
+    for key in cost_per_day_dict.keys():
+        for start_date in list_of_dates:
+            cost = cost_per_day_dict[key].get(start_date, 0.0)  # fallback for sparse data
+            if key in short_names:
+                short_name = short_names[key]
+            else:
+                short_name = key.removeprefix("Amazon").strip()
+            cost_per_day_by_service[short_name].append(cost)
 
     # Sort the map by yesterday's cost
     most_expensive_yesterday = sorted(cost_per_day_by_service.items(), key=lambda i: i[1][-1], reverse=True)
@@ -160,17 +155,17 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None,
     service_names = [k for k,_ in most_expensive_yesterday[:length]]
     longest_name_len = len(max(service_names, key = len))
 
-    buffer = f"{'Service':{longest_name_len}} ${'Yday':8} {'∆%':>5} {'Last 7d':7}\n"
+    buffer = f"{'Service':{longest_name_len}} 📆 {yesterday.strftime('%Y-%m-%d'):11}     {'Last 7d':8}\n"
 
     for service_name, costs in most_expensive_yesterday[:length]:
-        buffer += f"{service_name:{longest_name_len}} ${costs[-1]:8,.2f} {delta(costs):4.0f}% {sparkline(costs):7}\n"
+        buffer += f"{service_name:{longest_name_len}} ${costs[-1]:12,.2f}     {sparkline(costs):8}\n"
 
     other_costs = [0.0] * n_days
     for service_name, costs in most_expensive_yesterday[length:]:
         for i, cost in enumerate(costs):
             other_costs[i] += cost
 
-    buffer += f"{'Other':{longest_name_len}} ${other_costs[-1]:8,.2f} {delta(other_costs):4.0f}% {sparkline(other_costs):7}\n"
+    buffer += f"{'Other':{longest_name_len}} ${other_costs[-1]:12,.2f}     {sparkline(other_costs):8}\n"
 
     total_costs = [0.0] * n_days
     for day_number in range(n_days):
@@ -179,38 +174,19 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None,
                 total_costs[day_number] += costs[day_number]
             except IndexError:
                 total_costs[day_number] += 0.0
-
-    buffer += f"{'Total':{longest_name_len}} ${total_costs[-1]:8,.2f} {delta(total_costs):4.0f}% {sparkline(total_costs):7}\n"
+    buffer +=  f"----------------------------------------------\n"
+    buffer += f"{'👉 Total':{longest_name_len-1}} ${total_costs[-1]:12,.2f}     {sparkline(total_costs):8}"
 
     cost_per_day_by_service["total"] = total_costs[-1]
-
-    credits_expire_date = os.environ.get('CREDITS_EXPIRE_DATE')
-    if credits_expire_date:
-        credits_expire_date = datetime.datetime.strptime(credits_expire_date, "%m/%d/%Y")
-
-        credits_remaining_as_of = os.environ.get('CREDITS_REMAINING_AS_OF')
-        credits_remaining_as_of = datetime.datetime.strptime(credits_remaining_as_of, "%m/%d/%Y")
-
-        credits_remaining = float(os.environ.get('CREDITS_REMAINING'))
-
-        days_left_on_credits = (credits_expire_date - credits_remaining_as_of).days
-        allowed_credits_per_day = credits_remaining / days_left_on_credits
-
-        relative_to_budget = (total_costs[-1] / allowed_credits_per_day) * 100.0
-
-        if relative_to_budget < 60:
+    daily_budget = os.environ.get('DAILY_BUDGET')
+    if daily_budget:
+        if total_costs[-1] < float(daily_budget):
             emoji = ":white_check_mark:"
-        elif relative_to_budget > 110:
-            emoji = ":rotating_light:"
         else:
-            emoji = ":warning:"
-
-        summary = (f"{emoji} Yesterday's cost for {account_name} ${total_costs[-1]:,.2f} "
-                   f"is {relative_to_budget:.2f}% of credit budget "
-                   f"${allowed_credits_per_day:,.2f} for the day."
-                  )
+            emoji = ":rotating_light:"
+        summary = f"{emoji} {yesterday.strftime('%a %-d. of %b, %Y')}: Yesterday's cost for AWS was *${total_costs[-1]:,.2f}* compared to target daily budget of *${daily_budget}*."
     else:
-        summary = f"Yesterday's cost for account {account_name} was ${total_costs[-1]:,.2f}"
+        summary = f"{yesterday.strftime('%a %-d. of %b, %Y')}: Yesterday's cost for AWS was *${total_costs[-1]:,.2f}*."
 
     return summary, buffer, cost_per_day_by_service
 

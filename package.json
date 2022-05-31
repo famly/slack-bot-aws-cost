@@ -3,7 +3,7 @@
   "description": "",
   "version": "0.1.0",
   "scripts": {
-    "deploy": "serverless deploy --stage=\"prod\" --param=\"slack_url=$SLACK_WEBHOOK\"",
+    "deploy": "serverless deploy --stage=\"prod\" --param=\"slack_url=$SLACK_WEBHOOK\" --param=\"daily_budget=1800\"",
     "invoke": "serverless invoke --function reportCostToSlack --stage=\"prod\"",
     "sls": "serverless"
   },
