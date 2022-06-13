@@ -30,8 +30,8 @@ functions:
     timeout: 10
 
     events:
-      # Every day at 15:00 UTC.
-      - schedule: cron(0 15 * * ? *)
+      # Every day at 23:00 UTC.
+      - schedule: cron(0 23 * * ? *)
 
     environment:
       GROUP_BY: ${param:group, 'SERVICE'}
