@@ -67,6 +67,7 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None)
 
     today = datetime.datetime.today()
     yesterday = today - datetime.timedelta(days=1)
+    report_calculation_day = yesterday - datetime.timedelta(days=1)
     week_ago = today - datetime.timedelta(days=n_days)
     # Generate list of dates, so that even if our data is sparse,
     # we have the correct length lists of costs (len is n_days)
@@ -96,7 +97,7 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None)
     query = {
         "TimePeriod": {
             "Start": week_ago.strftime('%Y-%m-%d'),
-            "End": today.strftime('%Y-%m-%d'),
+            "End": yesterday.strftime('%Y-%m-%d'),
         },
         "Granularity": "DAILY",
         "Filter": {
@@ -184,9 +185,9 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None)
             emoji = ":white_check_mark:"
         else:
             emoji = ":rotating_light:"
-        summary = f"{emoji} {yesterday.strftime('%a %-d. of %b, %Y')}: Yesterday's cost for AWS was *${total_costs[-1]:,.2f}* compared to target daily budget of *${daily_budget}*."
+        summary = f"{emoji} {report_calculation_day.strftime('%a %-d. of %b, %Y')}: Yesterday's cost for AWS was *${total_costs[-1]:,.2f}* compared to target daily budget of *${daily_budget}*."
     else:
-        summary = f"{yesterday.strftime('%a %-d. of %b, %Y')}: Yesterday's cost for AWS was *${total_costs[-1]:,.2f}*."
+        summary = f"{report_calculation_day.strftime('%a %-d. of %b, %Y')}: Yesterday's cost for AWS was *${total_costs[-1]:,.2f}*."
 
     return summary, buffer, cost_per_day_by_service
 
