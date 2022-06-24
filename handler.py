@@ -48,27 +48,30 @@ def find_by_key(values: list, key: str, value: str):
     return None
 
 
-def lambda_handler(event, context):
+def lambda_handler(event, context, debug_output=False):
     group_by = os.environ.get("GROUP_BY", "SERVICE")
     length = int(os.environ.get("LENGTH", "5"))
 
     summary, buffer, data = report_cost(group_by=group_by, length=length)
 
     slack_hook_url = os.environ.get('SLACK_WEBHOOK_URL')
-    if slack_hook_url:
+    if slack_hook_url and not debug_output:
         publish_slack(slack_hook_url, summary, buffer)
 
     teams_hook_url = os.environ.get('TEAMS_WEBHOOK_URL')
-    if teams_hook_url:
+    if teams_hook_url and not debug_output:
         publish_teams(teams_hook_url, summary, buffer)
 
+    if debug_output:
+        print(summary)
+        print(buffer)
 
 def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None):
 
     today = datetime.datetime.today()
     yesterday = today - datetime.timedelta(days=1)
     report_calculation_day = yesterday - datetime.timedelta(days=1)
-    week_ago = today - datetime.timedelta(days=n_days)
+    week_ago = yesterday - datetime.timedelta(days=n_days)
     # Generate list of dates, so that even if our data is sparse,
     # we have the correct length lists of costs (len is n_days)
     list_of_dates = [
@@ -156,7 +159,7 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None)
     service_names = [k for k,_ in most_expensive_yesterday[:length]]
     longest_name_len = len(max(service_names, key = len))
 
-    buffer = f"{'Service':{longest_name_len}} 📆 {yesterday.strftime('%Y-%m-%d'):11}     {'Last 7d':8}\n"
+    buffer = f"{'Service':{longest_name_len}} 📆 {report_calculation_day.strftime('%Y-%m-%d'):11}     {'Last 7d':8}\n"
 
     for service_name, costs in most_expensive_yesterday[:length]:
         buffer += f"{service_name:{longest_name_len}} ${costs[-1]:12,.2f}     {sparkline(costs):8}\n"
@@ -185,15 +188,14 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, result: dict = None)
             emoji = ":white_check_mark:"
         else:
             emoji = ":rotating_light:"
-        summary = f"{emoji} {report_calculation_day.strftime('%a %-d. of %b, %Y')}: Yesterday's cost for AWS was *${total_costs[-1]:,.2f}* compared to target daily budget of *${daily_budget}*."
+        summary = f"{emoji} {report_calculation_day.strftime('%a %-d. of %b, %Y')}: Cost for AWS was *${total_costs[-1]:,.2f}* compared to target daily budget of *${daily_budget}*."
     else:
-        summary = f"{report_calculation_day.strftime('%a %-d. of %b, %Y')}: Yesterday's cost for AWS was *${total_costs[-1]:,.2f}*."
+        summary = f"{report_calculation_day.strftime('%a %-d. of %b, %Y')}: Cost for AWS was *${total_costs[-1]:,.2f}*."
 
     return summary, buffer, cost_per_day_by_service
 
 
 def publish_slack(hook_url, summary, buffer):
-
     resp = requests.post(
         hook_url,
         json={
@@ -219,37 +221,38 @@ def publish_teams(hook_url, summary, buffer):
 
 
 if __name__ == "__main__":
+    lambda_handler({}, {}, debug_output=True)
     # for running locally to test
-    import json
-    with open("example_boto3_result.json", "r") as f:
-        example_result = json.load(f)
-    with open("example_boto3_result2.json", "r") as f:
-        example_result2 = json.load(f)
+    # import json
+    # with open("example_boto3_result.json", "r") as f:
+    #     example_result = json.load(f)
+    # with open("example_boto3_result2.json", "r") as f:
+    #     example_result2 = json.load(f)
 
-    # summary, buffer, data = report_cost(group_by="LINKED_ACCOUNT")
-    # print(summary)
-    # print(buffer)
-    #
-    # summary, buffer, data = report_cost(group_by="REGION")
-    # print(summary)
-    # print(buffer)
-    #
-    # summary, buffer, data = report_cost(group_by="USAGE_TYPE", length=20)
-    # print(summary)
-    # print(buffer)
-    #
-    # summary, buffer, data = report_cost(group_by="SERVICE", length=20)
-    # print(summary)
-    # print(buffer)
+    # # summary, buffer, data = report_cost(group_by="LINKED_ACCOUNT")
+    # # print(summary)
+    # # print(buffer)
+    # #
+    # # summary, buffer, data = report_cost(group_by="REGION")
+    # # print(summary)
+    # # print(buffer)
+    # #
+    # # summary, buffer, data = report_cost(group_by="USAGE_TYPE", length=20)
+    # # print(summary)
+    # # print(buffer)
+    # #
+    # # summary, buffer, data = report_cost(group_by="SERVICE", length=20)
+    # # print(summary)
+    # # print(buffer)
 
-    # New Method with 2 example jsons
-    summary, buffer, cost_dict = report_cost(None, None, example_result, yesterday="2021-08-23", new_method=True)
-    assert "{0:.2f}".format(cost_dict.get("total", 0.0)) == "286.37", f'{cost_dict.get("total"):,.2f} != 286.37'
-    summary, buffer, cost_dict = report_cost(None, None, example_result2, yesterday="2021-08-29", new_method=True)
-    assert "{0:.2f}".format(cost_dict.get("total", 0.0)) == "21.45", f'{cost_dict.get("total"):,.2f} != 21.45'
+    # # New Method with 2 example jsons
+    # summary, buffer, cost_dict = report_cost(None, None, example_result, yesterday="2021-08-23", new_method=True)
+    # assert "{0:.2f}".format(cost_dict.get("total", 0.0)) == "286.37", f'{cost_dict.get("total"):,.2f} != 286.37'
+    # summary, buffer, cost_dict = report_cost(None, None, example_result2, yesterday="2021-08-29", new_method=True)
+    # assert "{0:.2f}".format(cost_dict.get("total", 0.0)) == "21.45", f'{cost_dict.get("total"):,.2f} != 21.45'
 
-    # Old Method with same jsons (will fail)
-    summary, buffer, cost_dict = report_cost(None, None, example_result, yesterday="2021-08-23", new_method=False)
-    assert "{0:.2f}".format(cost_dict.get("total", 0.0)) == "286.37", f'{cost_dict.get("total"):,.2f} != 286.37'
-    summary, buffer, cost_dict = report_cost(None, None, example_result2, yesterday="2021-08-29", new_method=False)
-    assert "{0:.2f}".format(cost_dict.get("total", 0.0)) == "21.45", f'{cost_dict.get("total"):,.2f} != 21.45'
+    # # Old Method with same jsons (will fail)
+    # summary, buffer, cost_dict = report_cost(None, None, example_result, yesterday="2021-08-23", new_method=False)
+    # assert "{0:.2f}".format(cost_dict.get("total", 0.0)) == "286.37", f'{cost_dict.get("total"):,.2f} != 286.37'
+    # summary, buffer, cost_dict = report_cost(None, None, example_result2, yesterday="2021-08-29", new_method=False)
+    # assert "{0:.2f}".format(cost_dict.get("total", 0.0)) == "21.45", f'{cost_dict.get("total"):,.2f} != 21.45'
