@@ -43,6 +43,7 @@ functions:
       CREDITS_EXPIRE_DATE: ${param:credits_expire_date, ''}
       CREDITS_REMAINING_AS_OF: ${param:credits_remaining_date, ''}
       CREDITS_REMAINING: ${param:credits_remaining, ''}
+      COST_AGGREGATION: ${param:cost_aggregation, 'AmortizedCost'}
 
 plugins:
   - serverless-python-requirements
