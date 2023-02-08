@@ -38,6 +38,8 @@ functions:
       LENGTH: ${param:group_length, 10}
       SLACK_WEBHOOK_URL: ${param:slack_url, ''}
       DAILY_BUDGET: ${param:daily_budget, ''}
+      DAILY_BUDGET_WEEKDAY: ${param:daily_budget_weekday, ''}
+      DAILY_BUDGET_WEEKEND: ${param:daily_budget_weekend, ''}
       TEAMS_WEBHOOK_URL: ${param:teams_url, ''}
       AWS_ACCOUNT_NAME: ${param:aws_account, ''}
       CREDITS_EXPIRE_DATE: ${param:credits_expire_date, ''}

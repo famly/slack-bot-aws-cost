@@ -182,7 +182,17 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
     buffer += f"{'👉 Total':{longest_name_len-1}} ${total_costs[-1]:12,.2f}     {sparkline(total_costs):8}"
 
     cost_per_day_by_service["total"] = total_costs[-1]
+
+    daily_budget_weekday = os.environ.get('DAILY_BUDGET_WEEKDAY')
+    daily_budget_weekend = os.environ.get('DAILY_BUDGET_WEEKEND')
     daily_budget = os.environ.get('DAILY_BUDGET')
+    # If daily budget is set for both weekend's and weekday's, we use those for the daily budget rather than the daily_budget
+    if daily_budget_weekend and daily_budget_weekday:
+        if report_calculation_day.weekday() < 5: # weekday returns the day of the week as an int, monday is 0 sunday is 6
+            daily_budget = daily_budget_weekday
+        else:
+            daily_budget = daily_budget_weekend
+
     if daily_budget:
         if total_costs[-1] < float(daily_budget):
             emoji = ":white_check_mark:"
