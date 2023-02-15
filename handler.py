@@ -18,6 +18,7 @@ short_names = {
     "Amazon Simple Storage Service": "S3",
 }
 
+# This is used to show accounts in a nice way in the output
 account_names_mapping = {
     "306741224501": "famly_co",
     "157858771872": "brighthorizons",
@@ -60,7 +61,7 @@ def lambda_handler(event, context, debug_output=False):
     group_by = os.environ.get("GROUP_BY", "SERVICE")
     length = int(os.environ.get("LENGTH", "5"))
     cost_aggregation = os.environ.get("COST_AGGREGATION", "UnblendedCost")
-    accounts = os.environ.get("ACCOUNTS", "").split()
+    accounts = os.environ.get("ACCOUNTS", "").split() # Should be account id's, space seperated
 
     summary, buffer, data = report_cost(group_by=group_by, length=length, cost_aggregation=cost_aggregation, accounts=accounts)
 
@@ -106,6 +107,7 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
 
     client = boto3.client('ce')
 
+    # This filter is sometimes used as part of an "And", so it's been extracted from the rest of the query.
     query_filter =  {
         "Not": {
             "Dimensions": {
@@ -120,6 +122,7 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
             }
         }
     }
+
     query = {
         "TimePeriod": {
             "Start": week_ago.strftime('%Y-%m-%d'),
@@ -141,6 +144,7 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
         result = defaultdict(dict)
         result['Total'] = client.get_cost_and_usage(**query)
         for account in accounts:
+            # We need to fetch the usage for each account, so we overwrite the filter
             account_query = query | {
                 "Filter": {
                     "And": [
@@ -180,6 +184,7 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
                 cost_per_day_by_service[short_name].append(cost)
         cost_per_day_by_service_by_account[account] = cost_per_day_by_service
 
+    # If we have any accounts, we also add "Others" which have the remainding costs
     if accounts != []:
         accounts += ["Others"]
         other_accounts_cost = copy.deepcopy(cost_per_day_by_service_by_account['Total'])
@@ -189,7 +194,7 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
             else:
                 for service_name, costs in cost_per_day_by_service_by_account[account].items():
                     other_accounts_cost[service_name][-1] -= costs[-1]
-        cost_per_day_by_service_by_account["Others"] = copy.deepcopy(other_accounts_cost)
+        cost_per_day_by_service_by_account["Others"] = other_accounts_cost
 
 
     # Sort the map by yesterday's cost
@@ -201,6 +206,7 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
     account_names = [account_names_mapping.get(account,account) for account in accounts]
     longest_account_name_len = len(max(account_names, "minimum len", key = len))+3
 
+    # We build up a buffer showing the different accounts here
     account_names_buffer = ""
     for account in account_names:
         account_names_buffer += f"     {account:>{longest_account_name_len}}"
@@ -213,6 +219,7 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
             try:
                 account_cost_buffer += f"    ${cost_per_day_by_service_by_account[account][service_name][-1]:{longest_account_name_len},.2f}"
             except IndexError:
+                # Default to 0, if not found
                 account_cost_buffer += f"    ${0.0:{longest_account_name_len},.2f}"
 
         buffer += f"{service_name:{longest_name_len}} ${costs[-1]:12,.2f}{account_cost_buffer}     {sparkline(costs):8}\n"
@@ -222,10 +229,12 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
     for service_name, costs in most_expensive_yesterday[length:]:
         for i, cost in enumerate(costs):
             other_costs[i] += cost
+        # Calculate "other" cost for each account
         for account in accounts:
             try:
                 other_costs_per_account[account] += cost_per_day_by_service_by_account[account][service_name][-1]
             except IndexError:
+                # Default to 0, if not found
                 other_costs_per_account[account] += 0.0
 
     account_cost_buffer = ""
