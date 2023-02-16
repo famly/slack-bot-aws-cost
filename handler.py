@@ -3,6 +3,7 @@ import boto3
 import datetime
 import os
 import requests
+import copy
 
 n_days = 7
 
@@ -15,6 +16,14 @@ short_names = {
     "Amazon Elastic Compute Cloud - Compute": "EC2 - Compute",
     "Savings Plans for AWS Compute usage": "Savings Plans",
     "Amazon Simple Storage Service": "S3",
+}
+
+# This is used to show accounts in a nice way in the output
+account_names_mapping = {
+    "306741224501": "famly_co",
+    "157858771872": "brighthorizons",
+    "380876067318": "famlydev",
+    "849294456676": "staging"
 }
 
 def sparkline(datapoints):
@@ -52,8 +61,9 @@ def lambda_handler(event, context, debug_output=False):
     group_by = os.environ.get("GROUP_BY", "SERVICE")
     length = int(os.environ.get("LENGTH", "5"))
     cost_aggregation = os.environ.get("COST_AGGREGATION", "UnblendedCost")
+    accounts = os.environ.get("ACCOUNTS", "").split() # Should be account id's, space seperated
 
-    summary, buffer, data = report_cost(group_by=group_by, length=length, cost_aggregation=cost_aggregation)
+    summary, buffer, data = report_cost(group_by=group_by, length=length, cost_aggregation=cost_aggregation, accounts=accounts)
 
     slack_hook_url = os.environ.get('SLACK_WEBHOOK_URL')
     if slack_hook_url and not debug_output:
@@ -67,7 +77,7 @@ def lambda_handler(event, context, debug_output=False):
         print(summary)
         print(buffer)
 
-def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: str = "UnblendedCost", result: dict = None):
+def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: str = "UnblendedCost", accounts: list = [], result: dict = None):
     today = datetime.datetime.today()
     yesterday = today - datetime.timedelta(days=1)
     report_calculation_day = yesterday - datetime.timedelta(days=1)
@@ -97,26 +107,29 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
 
     client = boto3.client('ce')
 
+    # This filter is sometimes used as part of an "And", so it's been extracted from the rest of the query.
+    query_filter =  {
+        "Not": {
+            "Dimensions": {
+                "Key": "RECORD_TYPE",
+                "Values": [
+                    "Credit",
+                    "Refund",
+                    "Upfront",
+                    "Support",
+                    "Tax",
+                ]
+            }
+        }
+    }
+
     query = {
         "TimePeriod": {
             "Start": week_ago.strftime('%Y-%m-%d'),
             "End": yesterday.strftime('%Y-%m-%d'),
         },
         "Granularity": "DAILY",
-        "Filter": {
-            "Not": {
-                "Dimensions": {
-                    "Key": "RECORD_TYPE",
-                    "Values": [
-                        "Credit",
-                        "Refund",
-                        "Upfront",
-                        "Support",
-                        "Tax",
-                    ]
-                }
-            }
-        },
+        "Filter": query_filter,
         "Metrics": [cost_aggregation],
         "GroupBy": [
             {
@@ -128,48 +141,108 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
 
     # Only run the query when on lambda, not when testing locally with example json
     if result is None:
-        result = client.get_cost_and_usage(**query)
+        result = defaultdict(dict)
+        result['Total'] = client.get_cost_and_usage(**query)
+        for account in accounts:
+            # We need to fetch the usage for each account, so we overwrite the filter
+            account_query = query | {
+                "Filter": {
+                    "And": [
+                        query_filter,
+                        {
+                            "Dimensions": {"Key": "LINKED_ACCOUNT", "Values": [account]}
+                        }
+                    ]
+                }
+            }
+            result[account] = client.get_cost_and_usage(**account_query)
 
-    cost_per_day_by_service = defaultdict(list)
-    cost_per_day_dict = defaultdict(dict)
 
-    for day in result['ResultsByTime']:
-        start_date = day["TimePeriod"]["Start"]
-        for group in day['Groups']:
-            key = group['Keys'][0]
-            if group_by == "LINKED_ACCOUNT":
-                dimension = find_by_key(result["DimensionValueAttributes"], "Value", key)
-                if dimension:
-                    key += " ("+dimension["Attributes"]["description"]+")"
-            cost = float(group['Metrics'][cost_aggregation]['Amount'])
-            cost_per_day_dict[key][start_date] = cost
+    cost_per_day_by_service_by_account = defaultdict(dict)
+    for account in result:
+        cost_per_day_by_service = defaultdict(list)
+        cost_per_day_dict = defaultdict(dict)
 
-    for key in cost_per_day_dict.keys():
-        for start_date in list_of_dates:
-            cost = cost_per_day_dict[key].get(start_date, 0.0)  # fallback for sparse data
-            if key in short_names:
-                short_name = short_names[key]
+        for day in result[account]['ResultsByTime']:
+            start_date = day["TimePeriod"]["Start"]
+            for group in day['Groups']:
+                key = group['Keys'][0]
+                if group_by == "LINKED_ACCOUNT":
+                    dimension = find_by_key(result[account]["DimensionValueAttributes"], "Value", key)
+                    if dimension:
+                        key += " ("+dimension["Attributes"]["description"]+")"
+                cost = float(group['Metrics'][cost_aggregation]['Amount'])
+                cost_per_day_dict[key][start_date] = cost
+
+        for key in cost_per_day_dict.keys():
+            for start_date in list_of_dates:
+                cost = cost_per_day_dict[key].get(start_date, 0.0)  # fallback for sparse data
+                if key in short_names:
+                    short_name = short_names[key]
+                else:
+                    short_name = key.removeprefix("Amazon").strip()
+                cost_per_day_by_service[short_name].append(cost)
+        cost_per_day_by_service_by_account[account] = cost_per_day_by_service
+
+    # If we have any accounts, we also add "Others" which have the remainding costs
+    if accounts != []:
+        accounts += ["Others"]
+        other_accounts_cost = copy.deepcopy(cost_per_day_by_service_by_account['Total'])
+        for account in cost_per_day_by_service_by_account:
+            if account == "Total":
+                continue
             else:
-                short_name = key.removeprefix("Amazon").strip()
-            cost_per_day_by_service[short_name].append(cost)
+                for service_name, costs in cost_per_day_by_service_by_account[account].items():
+                    other_accounts_cost[service_name][-1] -= costs[-1]
+        cost_per_day_by_service_by_account["Others"] = other_accounts_cost
+
 
     # Sort the map by yesterday's cost
+    cost_per_day_by_service = cost_per_day_by_service_by_account['Total']
     most_expensive_yesterday = sorted(cost_per_day_by_service.items(), key=lambda i: i[1][-1], reverse=True)
 
     service_names = [k for k,_ in most_expensive_yesterday[:length]]
     longest_name_len = len(max(service_names, key = len))
+    account_names = [account_names_mapping.get(account,account) for account in accounts]
+    longest_account_name_len = len(max(account_names, "minimum len", key = len))+3
 
-    buffer = f"{'Service':{longest_name_len}} 📆 {report_calculation_day.strftime('%Y-%m-%d'):11}     {'Last 7d':8}\n"
+    # We build up a buffer showing the different accounts here
+    account_names_buffer = ""
+    for account in account_names:
+        account_names_buffer += f"     {account:>{longest_account_name_len}}"
+
+    buffer = f"{'Service':{longest_name_len}} 📆 {'Total':>10}{account_names_buffer}     {'Last 7d':8}\n"
 
     for service_name, costs in most_expensive_yesterday[:length]:
-        buffer += f"{service_name:{longest_name_len}} ${costs[-1]:12,.2f}     {sparkline(costs):8}\n"
+        account_cost_buffer = ""
+        for account in accounts:
+            try:
+                account_cost_buffer += f"    ${cost_per_day_by_service_by_account[account][service_name][-1]:{longest_account_name_len},.2f}"
+            except IndexError:
+                # Default to 0, if not found
+                account_cost_buffer += f"    ${0.0:{longest_account_name_len},.2f}"
+
+        buffer += f"{service_name:{longest_name_len}} ${costs[-1]:12,.2f}{account_cost_buffer}     {sparkline(costs):8}\n"
 
     other_costs = [0.0] * n_days
+    other_costs_per_account = { account:0.0 for account in accounts }
     for service_name, costs in most_expensive_yesterday[length:]:
         for i, cost in enumerate(costs):
             other_costs[i] += cost
+        # Calculate "other" cost for each account
+        for account in accounts:
+            try:
+                other_costs_per_account[account] += cost_per_day_by_service_by_account[account][service_name][-1]
+            except IndexError:
+                # Default to 0, if not found
+                other_costs_per_account[account] += 0.0
 
-    buffer += f"{'Other':{longest_name_len}} ${other_costs[-1]:12,.2f}     {sparkline(other_costs):8}\n"
+    account_cost_buffer = ""
+    for account in accounts:
+        account_cost_buffer += f"    ${other_costs_per_account[account]:{longest_account_name_len},.2f}"
+
+
+    buffer += f"{'Other':{longest_name_len}} ${other_costs[-1]:12,.2f}{account_cost_buffer}     {sparkline(other_costs):8}\n"
 
     total_costs = [0.0] * n_days
     for day_number in range(n_days):
@@ -178,8 +251,21 @@ def report_cost(group_by: str = "SERVICE", length: int = 5, cost_aggregation: st
                 total_costs[day_number] += costs[day_number]
             except IndexError:
                 total_costs[day_number] += 0.0
-    buffer +=  f"----------------------------------------------\n"
-    buffer += f"{'👉 Total':{longest_name_len-1}} ${total_costs[-1]:12,.2f}     {sparkline(total_costs):8}"
+
+    total_costs_per_account = { account:0.0 for account in accounts }
+    for service_name, costs in most_expensive_yesterday:
+        for account in accounts:
+            try:
+                total_costs_per_account[account] += cost_per_day_by_service_by_account[account][service_name][-1]
+            except IndexError:
+                total_costs_per_account[account] += 0.0
+
+    account_cost_buffer = ""
+    for account in accounts:
+        account_cost_buffer += f"    ${total_costs_per_account[account]:{longest_account_name_len},.2f}"
+
+    buffer += "-------------------------------------------------" + "-"*(longest_account_name_len+5)*len(accounts) + f"\n"
+    buffer += f"{'👉 Total':{longest_name_len-1}} ${total_costs[-1]:12,.2f}{account_cost_buffer}     {sparkline(total_costs):8}"
 
     cost_per_day_by_service["total"] = total_costs[-1]
 
