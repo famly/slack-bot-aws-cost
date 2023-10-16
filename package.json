@@ -3,7 +3,7 @@
   "description": "",
   "version": "0.1.0",
   "scripts": {
-    "deploy": "serverless deploy --stage=\"prod\" --param=\"slack_url=$SLACK_WEBHOOK\" --param=\"daily_budget_weekend=1300\" --param=\"daily_budget_weekday=2200\" --param=\"accounts=306741224501 157858771872\"",
+    "deploy": "serverless deploy --stage=\"prod\" --param=\"slack_url=$SLACK_WEBHOOK\" --param=\"daily_budget_weekend=1300\" --param=\"daily_budget_weekday=2200\" --param=\"accounts=306741224501 157858771872 337937856221 955498850864\"",
     "invoke": "serverless invoke --function reportCostToSlack --stage=\"prod\"",
     "sls": "serverless"
   },
