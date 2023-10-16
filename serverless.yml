@@ -4,7 +4,7 @@ provider:
   name: aws
   profile: ${param:aws_profile, env:AWS_PROFILE, 'default'}
   region: ${env:AWS_REGION, env:AWS_DEFAULT_REGION, 'eu-central-1'}
-  runtime: python3.9
+  runtime: python3.10
 
   iam:
     role:

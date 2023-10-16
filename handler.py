@@ -23,7 +23,9 @@ account_names_mapping = {
     "306741224501": "famly_co",
     "157858771872": "brighthorizons",
     "380876067318": "famlydev",
-    "849294456676": "staging"
+    "849294456676": "staging",
+    "955498850864": "QRVey staging",
+    "337937856221": "QRVey prod"
 }
 
 def sparkline(datapoints):
